@@ -112,7 +112,8 @@ import (
             os.system(f"go fmt {conversion}")
     
     def update_dependencies(self):
-        file_list = self.get_all_files("pkg")
+        file_list = self.get_all_files("/Users/kuromesi/MyCOde/kind/share/kuromesi.com/kruise/test")
+        is_kruise = re.compile(r"github.com/openkruise/.*/v1alpha1")
         for file in file_list:
             with open(file, 'r') as f:
                 lines = f.readlines()
@@ -120,13 +121,18 @@ import (
             contains = False
             in_import = False
             # check import
+            patterns = []
+            prefixes = []
             for line in lines:
                 if "import (" in line or in_import:
                     if not in_import:
                         in_import = True
                     elif ")" in line:
                         in_import = False
-                    elif "github.com/openkruise/kruise/apis/apps/v1alpha1" in line:
+                        if not contains:
+                            new_lines = lines
+                            break
+                    elif is_kruise.findall(line):
                         tmp = line.strip()
                         prefix = tmp.split()
                         if len(prefix) > 1:
@@ -135,18 +141,39 @@ import (
                             prefix = "v1alpha1"
                         line = line.replace("v1alpha1", "v1beta1")
                         new_prefix = prefix.replace("v1alpha1", "v1beta1")
-                        pattern = "(?<![a-zA-Z])%s(?![a-zA-Z])"%prefix
+                        prefixes.append(new_prefix)
+                        patterns.append(f"(?<![a-zA-Z]){prefix}(?![a-zA-Z])")
                         contains = True
-                elif contains and "apps.kruise.io/v1beta1" not in line and re.findall(pattern, line):
-                    line = re.sub(pattern, new_prefix, line)
+                elif contains and "apps.kruise.io/v1beta1" not in line:
+                    line = line.replace("AppsV1alpha1()", "AppsV1beta1()")
+                    line = line.replace("PolicyV1alpha1()", "PolicyV1beta1()")
+                    for pattern in patterns:
+                        line = re.sub(pattern, prefixes[patterns.index(pattern)], line)
                 new_lines.append(line)
             with open(file, 'w') as f:
                 f.writelines(new_lines)
             os.system(f"go fmt {file}")
 
+    def change_kubebuilder_anno(self):
+        files = self.get_all_files("/Users/kuromesi/MyCOde/kind/share/kuromesi.com/kruise/pkg/webhook")
+        for file in files:
+            if "webhooks.go" not in file:
+                continue
+            with open(file, "r") as f:
+                lines = f.readlines()
+            new_lines = []
+            for line in lines:
+                line = line.replace("versions=v1alpha1", "versions=v1alpha1;v1beta1")
+                line = line.replace("-v1alpha1", "")
+                new_lines.append(line)
+            with open(file, "w") as f:
+                f.writelines(new_lines)
+
     def get_all_files(self, directory):
         file_list = []
         for root, directories, files in os.walk(directory):
+            if "client" in root[len(directory) - 1: ]:
+                continue
             for file in files:
                 if ".go" in file:
                     file_path = os.path.join(root, file)
@@ -352,9 +379,10 @@ class CodeGenerator():
 
 if __name__ == "__main__":
     cg = ConversionGenerator("/Users/kuromesi/MyCOde/kind/share/kuromesi.com/kruise")
-    # cg.update_dependencies()
+    # cg.change_kubebuilder_anno()
+    cg.update_dependencies()
     # cg.create_api()
-    cg.create_conversion_function()
+    # cg.create_conversion_function()
     # cg.get_crds()
     # crds = cg.crds
     # cg = CodeGenerator("/Users/kuromesi/MyCOde/kind/share/kuromesi.com/kruise/apis/apps/v1alpha1")
