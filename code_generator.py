@@ -36,78 +36,96 @@ class CodeGenerator():
                         type_def[line[1]] = line[2]
         self.objects = objects
         self.type_def = type_def
-        self.check_dfs()
+        self.check_type()
 
-    def check_dfs(self):
-        objects = self.objects
-        type_def = self.type_def
-        for k, v in objects.items():
-            for k1, v1 in v.items():
-                v_type = v1['type'].replace("[]", "").replace("*", "")
-                v1["need_dfs"] = False
-                v1["is_type_def"] = False
-                v1['is_map'] = False
-                if v_type in objects:
-                    v1["need_dfs"] = True
-                elif v_type in type_def:
-                    tmp = type_def[v_type].replace("[]", "").replace("*", "")
-                    if tmp in objects:
-                        v[k1]['type'] = type_def[v_type]
-                        if "[]" in type_def[v_type]:
-                            v1["is_list"] = True
-                        if "*" in type_def[v_type]:
-                            v1['is_ptr'] = True
-                        v1["need_dfs"] = True
-                    else:
-                        v1["is_type_def"] = True
-                elif RE_MAP.findall(v_type):
-                    v1['is_map'] = True
-                    assert RE_MAP.findall(v_type)[0][0] not in objects
-                    if RE_MAP.findall(v_type)[0][1] in objects:
-                        v1["need_dfs"] = True
+    def check_type(self):
+        for _, struct in self.objects.items():
+            for _, attr in struct.items():
+                field_type = attr['type']
+                self.check_dfs(field_type, attr)
+                self.check_map(field_type, attr)
+                self.check_list(field_type, attr)
+                self.check_ptr(field_type, attr)
+                self.check_type_def(field_type, attr)
 
+    def check_list(self, field_type, attr):
+        attr['is_list'] = False
+        if "[]" in field_type:
+            attr['is_list'] = True
+    
+    def check_ptr(self, field_type, attr):
+        attr['is_ptr'] = False
+        if "*" in field_type:
+            attr['is_ptr'] = True
+
+    def check_map(self, field_type, attr):
+        attr['is_map'] = False
+        if RE_MAP.findall(field_type):
+            attr['is_map'] = True
+            # assert the key of map is not a custom type, since not supported currently
+            assert RE_MAP.findall(field_type)[0][0] not in self.objects
+            if RE_MAP.findall(field_type)[0][1] in self.objects:
+                attr["need_dfs"] = True
+    
+    def check_type_def(self, field_type, attr):
+        attr["is_type_def"] = False
+        if field_type in self.type_def:
+            tmp = self.type_def[field_type].replace("[]", "").replace("*", "")
+            if tmp in self.objects:
+                attr['type'] = self.type_def[field_type]
+                self.check_list(self.type_def[field_type], attr)
+                self.check_ptr(self.type_def[field_type], attr)
+                attr["need_dfs"] = True
+            else:
+                attr["is_type_def"] = True
+
+    def check_dfs(self, field_type, attr):
+        field_type = attr['type'].replace("[]", "").replace("*", "")
+        attr["need_dfs"] = False
+        if field_type in self.objects:
+            attr["need_dfs"] = True
     
     def deep_gen(self, objects, name, dst, dst_field, src, src_field, version):
         lines = []
         fields = objects[name.replace("*", "").replace("[]", "")]
-        for k, v in fields.items():
-            if k == "TypeMeta":
+        for filed_name, field_attr in fields.items():
+            if filed_name == "TypeMeta":
                 continue
-            if v['is_list'] and v['need_dfs']:
-                array = k
+            if field_attr['is_list'] and field_attr['need_dfs']:
+                array = filed_name
                 array = array[0].lower() + array[1: ]
-                v_type = v['type'].replace("[]", "").replace("*", "")
+                v_type = field_attr['type'].replace("[]", "").replace("*", "")
                 for_val = "%s_val"%array
                 for_idx = "%s_idx"%array
                 if src_field:
-                    in_val = f"{src}.{src_field}.{k}".strip(".")
+                    in_val = f"{src}.{src_field}.{filed_name}".strip(".")
                 else:
-                    in_val = f"{src}.{k}".strip(".")
+                    in_val = f"{src}.{filed_name}".strip(".")
                 type_prefix = f"{version}.{v_type}".strip(".")
                 array_def = f"{array} := make([]{type_prefix}, len({in_val}))"
                 for_start = f"for {for_idx}, {for_val} := range {in_val} " + "{"
                 lines.append(array_def)
                 lines.append(for_start)
-                tmp = self.deep_gen(objects, v['type'], f"{array}[{for_idx}]", "", for_val, "", version)
+                tmp = self.deep_gen(objects, field_attr['type'], f"{array}[{for_idx}]", "", for_val, "", version)
                 lines.extend(tmp)
                 lines.append("}")
                 if dst_field:
-                    assign_val = f"{dst}.{dst_field}.{k}".strip(".")
+                    assign_val = f"{dst}.{dst_field}.{filed_name}".strip(".")
                 else:
-                    assign_val = f"{dst}.{k}".strip(".")
+                    assign_val = f"{dst}.{filed_name}".strip(".")
                 lines.append(f"{assign_val} = {array}")
-            elif v['is_map'] and v['need_dfs']:
-                obj_map = k
+            elif field_attr['is_map'] and field_attr['need_dfs']:
+                obj_map = filed_name
                 obj_map = obj_map[0].lower() + obj_map[1: ]
                 for_val = "%s_val"%obj_map
                 for_key = "%s_key"%obj_map
                 if src_field:
-                    in_val = f"{src}.{src_field}.{k}".strip(".")
+                    in_val = f"{src}.{src_field}.{filed_name}".strip(".")
                 else:
-                    in_val = f"{src}.{k}".strip(".")
-                assign = RE_MAP.findall(v['type'])[0]
+                    in_val = f"{src}.{filed_name}".strip(".")
+                assign = RE_MAP.findall(field_attr['type'])[0][1]
                 map_type = f"{version}.{assign}".strip(".")
-                map_type = v['type'].replace(assign, map_type)
+                map_type = field_attr['type'].replace(assign, map_type)
                 map_def = f"{obj_map} := make({map_type}, len({in_val}))"
                 for_start = f"for {for_key}, {for_val} := range {in_val} " + "{"
                 
@@ -118,20 +136,20 @@ class CodeGenerator():
                 lines.append(map_def)
                 lines.append(for_start)
                 lines.append(assign_line)
-                tmp = self.deep_gen(objects, RE_MAP.findall(v['type'])[0], assign, "", for_val, "", version)
+                tmp = self.deep_gen(objects, RE_MAP.findall(field_attr['type'])[0][1], assign, "", for_val, "", version)
                 lines.extend(tmp)
                 lines.append(f"{obj_map}[{for_key}] = {assign}")
                 lines.append("}")
-                assign = f"{dst}.{dst_field}.{k}".replace("..", ".")
+                assign = f"{dst}.{dst_field}.{filed_name}".replace("..", ".")
                 lines.append(f"{assign} = {obj_map}")
-            elif v['need_dfs']:                    
-                tmp = self.deep_gen(objects, v['type'], dst, f"{dst_field}.{k}".strip("."), src, f"{src_field}.{k}".strip("."), version)
-                if v['is_ptr']:
-                    cur_src_field = f"{src_field}.{k}".strip(".")
+            elif field_attr['need_dfs']:                    
+                tmp = self.deep_gen(objects, field_attr['type'], dst, f"{dst_field}.{filed_name}".strip("."), src, f"{src_field}.{filed_name}".strip("."), version)
+                if field_attr['is_ptr']:
+                    cur_src_field = f"{src_field}.{filed_name}".strip(".")
                     lines.append(f"if {src}.{cur_src_field} != nil " + "{")
 
-                    assign = f"{dst_field}.{k}".strip(".")
-                    assign_val = f"{version}.{v['type'].replace('*', '')}{{}}".strip(".")
+                    assign = f"{dst_field}.{filed_name}".strip(".")
+                    assign_val = f"{version}.{field_attr['type'].replace('*', '')}{{}}".strip(".")
                     assign = f"{dst}.{assign} = &{assign_val}"
                     lines.append(assign)
                     lines.extend(tmp)
@@ -139,10 +157,10 @@ class CodeGenerator():
                 else:
                     lines.extend(tmp)
             else:
-                cur_dst_field = f"{dst_field}.{k}".strip(".")
-                cur_src_field = f"{src_field}.{k}".strip(".")
-                if v['is_type_def']:
-                    v_type = v['type'].replace("[]", "").replace("*", "")
+                cur_dst_field = f"{dst_field}.{filed_name}".strip(".")
+                cur_src_field = f"{src_field}.{filed_name}".strip(".")
+                if field_attr['is_type_def']:
+                    v_type = field_attr['type'].replace("[]", "").replace("*", "")
                     type_prefix = f"{version}.{v_type}".strip(".")
                     line = f"{dst}.{cur_dst_field} = {type_prefix}({src}.{cur_src_field})"
                 else:
@@ -150,10 +168,18 @@ class CodeGenerator():
                 lines.append(line)
         return lines
     
-    def remove_comment(self, file):
+    def remove_comment(self, lines):
+        """remove comments and blank lines
+
+        Args:
+            lines (list): lines of a file
+
+        Returns:
+            list: processed lines
+        """        
         tmp = []
         comment = False
-        for line in file:
+        for line in lines:
             if "/*" in line:
                 comment = True
                 continue
@@ -186,10 +212,4 @@ class CodeGenerator():
                 field_name = field_type.split(".")[-1]
             else:
                 raise Exception("unexpected input: %s"%line)
-            is_list = False
-            is_ptr = False
-            if "[]" in field_type:
-                is_list = True
-            if "*" in field_type:
-                is_ptr = True
-            fields[field_name] = {"type": field_type, "is_list": is_list, "is_ptr": is_ptr}
+            fields[field_name] = {"type": field_type}

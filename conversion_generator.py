@@ -1,13 +1,14 @@
 import yaml, os, re
 from code_generator import CodeGenerator
-
+from config import config
+from constants import *
 
 class ConversionGenerator():
-    def __init__(self, project_path) -> None:
-        self.project_path = project_path
+    def __init__(self) -> None:
+        self.project_path = config['conversionInfo']['projectPath']
         self.crds = None
         self.get_crds()
-        os.chdir(project_path)
+        os.chdir(self.project_path)
     
     def get_crds(self):
         project_file = os.path.join(self.project_path, "PROJECT")
@@ -23,72 +24,43 @@ class ConversionGenerator():
     
     def create_api(self):
         crds = self.crds
+        new_version = config['conversionInfo']['newVersion']
+        old_version = config['conversionInfo']['oldVersion']
         for k, v in crds.items():
-            command = f"echo n | kubebuilder create api --group {v['group']} --version v1beta1 --kind {k} --namespaced=true --resource"
+            command = f"echo n | kubebuilder create api --group {v['group']} --version {new_version} --kind {k} --namespaced=true --resource"
             os.system(command)
         for k, v in crds.items():
             old_version = os.path.join(self.project_path, f"apis/{v['group']}/v1alpha1/{k.lower()}_types.go")
             with open(old_version, 'r') as f:
-                old = f.read().replace("package v1alpha1", "package v1beta1")
+                old = f.read().replace(f"package {old_version}", f"package {new_version}")
             new_version = os.path.join(self.project_path, f"apis/{v['group']}/v1beta1/{k.lower()}_types.go")
             with open(new_version, 'w') as f:
                 f.write(old)
 
     def create_conversion_function(self):
-        old_version = "v1alpha1"
-        new_version = "v1beta1"
-        paths = [f"/Users/kuromesi/MyCOde/kind/share/kuromesi.com/kruise/apis/apps/{old_version}",
-                 f"/Users/kuromesi/MyCOde/kind/share/kuromesi.com/kruise/apis/policy/{old_version}"]
+        old_version = config['conversionInfo']['oldVersion']
+        new_version = config['conversionInfo']['newVersion']
+        paths = config['conversionFunction']['filePath']
         cg = CodeGenerator(paths)
         crds = self.crds
         cg.scan_code()
         for k, v in crds.items():
             if k == "StatefulSet":
                 continue
-            conversion = os.path.join(self.project_path, f"apis/{v['group']}/{new_version}/{k.lower()}_conversion.go")
+            conversion = config['conversionFunction']['apiPrefix']
+            conversion = conversion.replace("{group}", v['group']).replace("{version}", new_version)
+            conversion = os.path.join(self.project_path, conversion, f"{k.lower()}_conversion.go")
             with open(conversion, 'w') as f:
-                content = f'''/*
-Copyright 2020 The Kruise Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
-package {new_version}
-
-func (*{k}) Hub() {{}}'''
-                f.write(content)
-            os.system(f"go fmt {coversion}")
-            conversion = os.path.join(self.project_path, f"apis/{v['group']}/{old_version}/{k.lower()}_conversion.go")
+                content = [config["conversionFunction"]['header']]
+                content.append(f"\npackage {new_version}\n")
+                content.append(f"func (*{k}) Hub() {{}}")
+                f.writelines(line + '\n' for line in content)
             os.system(f"go fmt {conversion}")
+            conversion = os.path.join(self.project_path, f"apis/{v['group']}/{old_version}/{k.lower()}_conversion.go")
             with open(conversion, 'w') as f:
-                header = f'''/*
-Copyright 2020 The Kruise Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
-package {old_version}
-
+                content = [config['conversionFunction']['header']]
+                content.append(f"\npackage {old_version}\n")
+                header = f'''
 import (
     "fmt"
 
@@ -96,26 +68,32 @@ import (
     "sigs.k8s.io/controller-runtime/pkg/conversion"
 )'''
                 content = [header]
-                content.append(f"func (src *{k}) ConvertTo(dstRaw conversion.Hub) error " + "{")
-                content.append("switch t := dstRaw.(type) {")
-                content.append(f"case *v1beta1.{k}:")
-                content.append(f"dst := dstRaw.(*v1beta1.{k})")
-                lines = cg.deep_gen(cg.objects, k, "dst", "", "src", "", "v1beta1")
+                lines = [
+                    f"func (src *{k}) ConvertTo(dstRaw conversion.Hub) error " + "{",
+                    "switch t := dstRaw.(type) {",
+                    f"case *v1beta1.{k}:",
+                    f"dst := dstRaw.(*v1beta1.{k})"
+                ]
+                lines.extend(cg.deep_gen(cg.objects, k, "dst", "", "src", "", "v1beta1"))
                 content.extend(lines)
-                content.append("default:\nreturn fmt.Errorf(\"unsupported type %v\", t)\n}\nreturn nil\n}\n")
-                content.append(f"func (dst *{k}) ConvertFrom(srcRaw conversion.Hub) error " + "{")
-                content.append("switch t := srcRaw.(type) {")
-                content.append(f"case *v1beta1.{k}:")
-                content.append(f"src := srcRaw.(*v1beta1.{k})")
-                lines = cg.deep_gen(cg.objects, k, "dst", "", "src", "", "")
+                lines = [
+                    "default:\nreturn fmt.Errorf(\"unsupported type %v\", t)\n}\nreturn nil\n}\n",
+                    f"func (dst *{k}) ConvertFrom(srcRaw conversion.Hub) error " + "{",
+                    "switch t := srcRaw.(type) {",
+                    f"case *v1beta1.{k}:",
+                    f"src := srcRaw.(*v1beta1.{k})"
+                ]
+                lines.extend(cg.deep_gen(cg.objects, k, "dst", "", "src", "", ""))
                 content.extend(lines)
                 content.append("default:\nreturn fmt.Errorf(\"unsupported type %v\", t)\n}\nreturn nil\n}\n")
                 f.writelines(line + '\n' for line in content)
             os.system(f"go fmt {conversion}")
     
     def update_dependencies(self):
-        file_list = self.get_all_files("/Users/kuromesi/MyCOde/kind/share/kuromesi.com/kruise/test")
-        is_kruise = re.compile(r"github.com/openkruise/.*/v1alpha1")
+        file_list = []
+        for path in config['dependencyUpdate']['filePath']:
+            file_list.extend(self.get_all_files(path))
+        is_kruise = re.compile(config['dependencyUpdate']['updatePackage'])
         for file in file_list:
             with open(file, 'r') as f:
                 lines = f.readlines()
@@ -157,9 +135,12 @@ import (
             os.system(f"go fmt {file}")
 
     def change_kubebuilder_anno(self):
-        files = self.get_all_files("/Users/kuromesi/MyCOde/kind/share/kuromesi.com/kruise/pkg/webhook")
+        files = []
+        paths = config['webhookUpdate']['filePath']
+        for path in paths:
+            files.extend(self.get_all_files(path))
         for file in files:
-            if not re.findall(r"webhooks?.go", file):
+            if not RE_WEBHOOK.findall(file):
                 continue
             with open(file, "r") as f:
                 lines = f.readlines()
@@ -181,11 +162,21 @@ import (
                     file_path = os.path.join(root, file)
                     file_list.append(file_path)
         return file_list
+    
+    def do_filter(self, conditions, line) -> bool:
+        for cond in conditions:
+            if cond in line:
+                return True
+        return False
+    
+    def do_replace(self, line, rep):
+        for r in rep:
+            line.replace(r['from'], r['to'])
         
 if __name__ == "__main__":
-    cg = ConversionGenerator("/Users/kuromesi/MyCOde/kind/share/kuromesi.com/kruise")
-    cg.change_kubebuilder_anno()
-    # cg.update_dependencies()
+    cg = ConversionGenerator()
+    # cg.change_kubebuilder_anno()
+    cg.update_dependencies()
     # cg.create_api()
     # cg.create_conversion_function()
     # cg.get_crds()

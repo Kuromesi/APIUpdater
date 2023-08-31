@@ -1,0 +1,41 @@
+kind: apiUpdater
+annotations: update kruise from v1alpha1 to v1beta1
+conversionInfo:
+  oldVersion: v1alpha1
+  newVersion: v1beta1 
+  projectPath: /Users/kuromesi/MyCOde/kind/share/kuromesi.com/kruise
+dependencyUpdate:
+  filePath:
+  - /Users/kuromesi/MyCOde/kind/share/kuromesi.com/kruise/test
+  - /Users/kuromesi/MyCOde/kind/share/kuromesi.com/kruise/pkg
+  updatePackage: github.com/openkruise/.*/v1alpha1
+webhookUpdate:
+  filePath:
+  - /Users/kuromesi/MyCOde/kind/share/kuromesi.com/kruise/pkg/webhook
+  replace:
+  - from: versions=v1alpha1
+    to: versions=v1alpha1;v1beta1
+  - from: -v1alpha1
+    to: "" 
+conversionFunction: 
+  filePath:
+  - /Users/kuromesi/MyCOde/kind/share/kuromesi.com/kruise/apis/apps/v1alpha1
+  - /Users/kuromesi/MyCOde/kind/share/kuromesi.com/kruise/apis/policy/v1alpha1
+  apiPrefix: apis/{group}/{version}
+  header: |
+    /*
+    Copyright 2020 The Kruise Authors.
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+    */
+  
